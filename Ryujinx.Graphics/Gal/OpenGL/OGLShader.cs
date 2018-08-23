@@ -9,6 +9,8 @@ namespace Ryujinx.Graphics.Gal.OpenGL
 {
     class OGLShader : IGalShader
     {
+        private const int ExtraDataSize = 8;
+
         public OGLShaderProgram Current;
 
         private ConcurrentDictionary<long, OGLShaderStage> Stages;
@@ -20,6 +22,7 @@ namespace Ryujinx.Graphics.Gal.OpenGL
         private OGLConstBuffer Buffer;
 
         private int ExtraUboHandle;
+        private int GlobalMemoryUboHandle;
 
         public OGLShader(OGLConstBuffer Buffer)
         {
@@ -72,8 +75,19 @@ namespace Ryujinx.Graphics.Gal.OpenGL
             return new OGLShaderStage(
                 Type,
                 Program.Code,
+                Program.GlobalMemory,
                 Program.Uniforms,
                 Program.Textures);
+        }
+
+        public ShaderDeclInfo GetGlobalMemoryUsage(long Key)
+        {
+            if (Stages.TryGetValue(Key, out OGLShaderStage Stage))
+            {
+                return Stage.GlobalMemoryUsage;
+            }
+
+            return null;
         }
 
         public IEnumerable<ShaderDeclInfo> GetConstBufferUsage(long Key)
@@ -105,7 +119,7 @@ namespace Ryujinx.Graphics.Gal.OpenGL
             GL.Uniform1(Location, Value);
         }
 
-        public unsafe void SetFlip(float X, float Y)
+        public unsafe void SetExtraData(float FlipX, float FlipY, int Instance)
         {
             BindProgram();
 
@@ -113,14 +127,31 @@ namespace Ryujinx.Graphics.Gal.OpenGL
 
             GL.BindBuffer(BufferTarget.UniformBuffer, ExtraUboHandle);
 
-            float* Data = stackalloc float[4];
-            Data[0] = X;
-            Data[1] = Y;
+            float* Data = stackalloc float[ExtraDataSize];
+            Data[0] = FlipX;
+            Data[1] = FlipY;
+            Data[2] = BitConverter.Int32BitsToSingle(Instance);
 
             //Invalidate buffer
-            GL.BufferData(BufferTarget.UniformBuffer, 4 * sizeof(float), IntPtr.Zero, BufferUsageHint.StreamDraw);
+            GL.BufferData(BufferTarget.UniformBuffer, ExtraDataSize * sizeof(float), IntPtr.Zero, BufferUsageHint.StreamDraw);
 
-            GL.BufferSubData(BufferTarget.UniformBuffer, IntPtr.Zero, 4 * sizeof(float), (IntPtr)Data);
+            GL.BufferSubData(BufferTarget.UniformBuffer, IntPtr.Zero, ExtraDataSize * sizeof(float), (IntPtr)Data);
+        }
+
+        public void SetGlobalMemory(IntPtr Data)
+        {
+            const int Size = 16384;
+
+            BindProgram();
+
+            EnsureGmemBlock();
+
+            GL.BindBuffer(BufferTarget.UniformBuffer, GlobalMemoryUboHandle);
+
+            //Invalidate buffer
+            GL.BufferData(BufferTarget.UniformBuffer, Size, IntPtr.Zero, BufferUsageHint.StreamDraw);
+
+            GL.BufferSubData(BufferTarget.UniformBuffer, IntPtr.Zero, Size, Data);
         }
 
         public void Bind(long Key)
@@ -205,9 +236,23 @@ namespace Ryujinx.Graphics.Gal.OpenGL
 
                 GL.BindBuffer(BufferTarget.UniformBuffer, ExtraUboHandle);
 
-                GL.BufferData(BufferTarget.UniformBuffer, 4 * sizeof(float), IntPtr.Zero, BufferUsageHint.StreamDraw);
+                GL.BufferData(BufferTarget.UniformBuffer, ExtraDataSize * sizeof(float), IntPtr.Zero, BufferUsageHint.StreamDraw);
 
                 GL.BindBufferBase(BufferRangeTarget.UniformBuffer, 0, ExtraUboHandle);
+            }
+        }
+
+        private void EnsureGmemBlock()
+        {
+            if (GlobalMemoryUboHandle == 0)
+            {
+                GlobalMemoryUboHandle = GL.GenBuffer();
+
+                GL.BindBuffer(BufferTarget.UniformBuffer, GlobalMemoryUboHandle);
+
+                GL.BufferData(BufferTarget.UniformBuffer, 16384, IntPtr.Zero, BufferUsageHint.StreamDraw);
+
+                GL.BindBufferBase(BufferRangeTarget.UniformBuffer, 1, GlobalMemoryUboHandle);
             }
         }
 
@@ -227,8 +272,12 @@ namespace Ryujinx.Graphics.Gal.OpenGL
 
             GL.UniformBlockBinding(ProgramHandle, ExtraBlockindex, 0);
 
-            //First index is reserved
-            int FreeBinding = 1;
+            int GmemBlockIndex = GL.GetUniformBlockIndex(ProgramHandle, GlslDecl.GmemUniformBlockName);
+
+            GL.UniformBlockBinding(ProgramHandle, GmemBlockIndex, 1);
+
+            //First two indices are reserved (see above)
+            int FreeBinding = 2;
 
             void BindUniformBlocksIfNotNull(OGLShaderStage Stage)
             {

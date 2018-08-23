@@ -180,7 +180,7 @@ namespace Ryujinx.Graphics.Gal.Shader
             TextureInfo.AddRange(Decl.Textures.Values);
             TextureInfo.AddRange(IterateCbTextures());
 
-            return new GlslProgram(GlslCode, TextureInfo, Decl.Uniforms.Values);
+            return new GlslProgram(GlslCode, Decl.GmemBase, TextureInfo, Decl.Uniforms.Values);
         }
 
         private void PrintDeclHeader()
@@ -241,14 +241,25 @@ namespace Ryujinx.Graphics.Gal.Shader
         {
             if (Decl.ShaderType == GalShaderType.Vertex)
             {
-                SB.AppendLine("layout (std140) uniform " + GlslDecl.ExtraUniformBlockName + "{");
+                SB.AppendLine("layout (std140) uniform " + GlslDecl.ExtraUniformBlockName + " {");
 
                 SB.AppendLine(IdentationStr + "vec2 " + GlslDecl.FlipUniformName + ";");
 
+                SB.AppendLine(IdentationStr + "int " + GlslDecl.InstanceUniformName + ";");
+
                 SB.AppendLine("};");
+                SB.AppendLine();
             }
 
-            SB.AppendLine();
+            if (Decl.GmemBase != null)
+            {
+                SB.AppendLine("layout (std140) uniform " + GlslDecl.GmemUniformBlockName + " {");
+
+                SB.AppendLine($"{IdentationStr}vec4 {GlslDecl.GmemUniformBlockName}_data[{GlslDecl.MaxUboSize}];");
+
+                SB.AppendLine("};");
+                SB.AppendLine();
+            }
 
             foreach (ShaderDeclInfo DeclInfo in Decl.Uniforms.Values.OrderBy(DeclKeySelector))
             {
@@ -600,10 +611,10 @@ namespace Ryujinx.Graphics.Gal.Shader
                 {
                     if (Op.Inst == ShaderIrInst.Bra)
                     {
-                        if (Block.Branch.Position <= Block.Position)
+                        /*if (Block.Branch.Position <= Block.Position)
                         {
                             SB.AppendLine(Identation + "continue;");
-                        }
+                        }*/
                     }
                     else if (Op.Inst == ShaderIrInst.Emit)
                     {
@@ -695,6 +706,7 @@ namespace Ryujinx.Graphics.Gal.Shader
             {
                 case ShaderIrOperAbuf Abuf: return GetName (Abuf);
                 case ShaderIrOperCbuf Cbuf: return GetName (Cbuf);
+                case ShaderIrOperGmem Gmem: return GetName (Gmem);
                 case ShaderIrOperGpr  Gpr:  return GetName (Gpr);
                 case ShaderIrOperImm  Imm:  return GetValue(Imm);
                 case ShaderIrOperImmf Immf: return GetValue(Immf);
@@ -758,6 +770,16 @@ namespace Ryujinx.Graphics.Gal.Shader
             }
         }
 
+        private string GetName(ShaderIrOperGmem Gmem)
+        {
+            string Index = "(floatBitsToInt(" + GetSrcExpr(Gmem.BaseAddress) + ") - " +
+                            "floatBitsToInt(" + GetName(Decl.GmemBaseCbuf) + ")";
+
+            Index += " + " + Gmem.Offset.ToString(CultureInfo.InvariantCulture) + ")";
+
+            return $"{GlslDecl.GmemUniformBlockName}_data[{Index} / 16][({Index} / 4) % 4]";
+        }
+
         private string GetOutAbufName(ShaderIrOperAbuf Abuf)
         {
             if (Decl.ShaderType == GalShaderType.Geometry)
@@ -779,7 +801,7 @@ namespace Ryujinx.Graphics.Gal.Shader
                 switch (Abuf.Offs)
                 {
                     case GlslDecl.VertexIdAttr:   return "gl_VertexID";
-                    case GlslDecl.InstanceIdAttr: return "gl_InstanceID";
+                    case GlslDecl.InstanceIdAttr: return GlslDecl.InstanceUniformName;
                 }
             }
             else if (Decl.ShaderType == GalShaderType.TessEvaluation)
@@ -1283,6 +1305,7 @@ namespace Ryujinx.Graphics.Gal.Shader
                         : OperType.F32;
 
                 case ShaderIrOperCbuf Cbuf: return OperType.F32;
+                case ShaderIrOperGmem Gmem: return OperType.F32;
                 case ShaderIrOperGpr  Gpr:  return OperType.F32;
                 case ShaderIrOperImm  Imm:  return OperType.I32;
                 case ShaderIrOperImmf Immf: return OperType.F32;

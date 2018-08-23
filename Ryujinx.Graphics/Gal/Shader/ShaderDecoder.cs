@@ -13,7 +13,7 @@ namespace Ryujinx.Graphics.Gal.Shader
             Dictionary<long, ShaderIrBlock> Visited    = new Dictionary<long, ShaderIrBlock>();
             Dictionary<long, ShaderIrBlock> VisitedEnd = new Dictionary<long, ShaderIrBlock>();
 
-            Queue<ShaderIrBlock> Blocks = new Queue<ShaderIrBlock>();
+            SortedList<long, ShaderIrBlock> Blocks = new SortedList<long, ShaderIrBlock>();
 
             ShaderIrBlock Enqueue(long Position, ShaderIrBlock Source = null)
             {
@@ -21,7 +21,7 @@ namespace Ryujinx.Graphics.Gal.Shader
                 {
                     Output = new ShaderIrBlock(Position);
 
-                    Blocks.Enqueue(Output);
+                    Blocks.Add(Position, Output);
 
                     Visited.Add(Position, Output);
                 }
@@ -38,7 +38,9 @@ namespace Ryujinx.Graphics.Gal.Shader
 
             while (Blocks.Count > 0)
             {
-                ShaderIrBlock Current = Blocks.Dequeue();
+                ShaderIrBlock Current = Blocks.Values[0];
+
+                Blocks.Remove(Current.Position);
 
                 FillBlock(Memory, Current, Start + HeaderSize);
 
@@ -56,7 +58,7 @@ namespace Ryujinx.Graphics.Gal.Shader
                     {
                         int Offset = ((ShaderIrOperImm)Op.OperandA).Value;
 
-                        long Target = Current.EndPosition + Offset;
+                        long Target = Start + HeaderSize + Offset;
 
                         Current.Branch = Enqueue(Target, Current);
                     }
@@ -169,6 +171,8 @@ namespace Ryujinx.Graphics.Gal.Shader
                 {
                     continue;
                 }
+
+                Block.Offset = (int)(Position - Beginning - 8);
 
                 Decode(Block, OpCode);
             }

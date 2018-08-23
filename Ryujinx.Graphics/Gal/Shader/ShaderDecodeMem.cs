@@ -97,6 +97,56 @@ namespace Ryujinx.Graphics.Gal.Shader
             }
         }
 
+        public static void Ld_G(ShaderIrBlock Block, long OpCode)
+        {
+            int Type = (int)(OpCode >> 48) & 7;
+
+            int Offset = (int)(OpCode >> 12) >> 8;
+
+            ShaderIrOperGpr Temp = ShaderIrOperGpr.MakeTemporary();
+
+            Block.AddNode(new ShaderIrAsg(Temp, GetOperGpr8(OpCode)));
+
+            int Count = 1;
+
+            if (Type > 5)
+            {
+                Count = 4;
+            }
+            else if (Type == 5)
+            {
+                Count = 2;
+            }
+
+            for (int Index = 0; Index < Count; Index++)
+            {
+                ShaderIrOperGmem OperA = new ShaderIrOperGmem(Temp, Offset + Index * 4);
+
+                ShaderIrOperGpr OperD = GetOperGpr0(OpCode);
+
+                OperD.Index += Index;
+
+                if (!OperD.IsValidRegister)
+                {
+                    break;
+                }
+
+                ShaderIrNode Node = OperA;
+
+                if (Type < 4)
+                {
+                    //This is a 8 or 16 bits type.
+                    bool Signed = (Type & 1) != 0;
+
+                    int Size = 8 << (Type >> 1);
+
+                    Node = ExtendTo32(Node, Signed, Size);
+                }
+
+                Block.AddNode(GetPredNode(new ShaderIrAsg(OperD, Node), OpCode));
+            }
+        }
+
         public static void St_A(ShaderIrBlock Block, long OpCode)
         {
             ShaderIrNode[] Opers = GetOperAbuf20(OpCode);
@@ -218,6 +268,13 @@ namespace Ryujinx.Graphics.Gal.Shader
             ShaderIrNode OperA = GetOperGpr8    (OpCode);
             ShaderIrNode OperB = GetOperGpr20   (OpCode);
             ShaderIrNode OperC = GetOperImm13_36(OpCode);
+
+            int Type = (int)((OpCode >> 53) & 0xf);
+
+            if (Type == 7 || Type == 8 || Type == 9)
+            {
+                ((ShaderIrOperGpr)OperA).Index++;
+            }
 
             int LutIndex;
 

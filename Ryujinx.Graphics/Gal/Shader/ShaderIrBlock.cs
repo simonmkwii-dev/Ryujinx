@@ -6,6 +6,7 @@ namespace Ryujinx.Graphics.Gal.Shader
     {
         public long Position    { get; set; }
         public long EndPosition { get; set; }
+        public int  Offset      { get; set; }
 
         public ShaderIrBlock Next   { get; set; }
         public ShaderIrBlock Branch { get; set; }
