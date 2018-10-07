@@ -1,6 +1,7 @@
 using ChocolArm64.Memory;
 using Ryujinx.Graphics.Memory;
 using Ryujinx.HLE.HOS.Services.Nv.NvGpuAS;
+using Ryujinx.HLE.HOS.Services.Nv.NvMap;
 using Ryujinx.HLE.Logging;
 using System;
 using System.Collections.Concurrent;
@@ -9,37 +10,25 @@ namespace Ryujinx.HLE.HOS.Services.Nv.NvHostChannel
 {
     class NvHostChannelIoctl
     {
-        private class ChannelsPerProcess
-        {
-            public ConcurrentDictionary<NvChannelName, NvChannel> Channels { get; private set; }
-
-            public ChannelsPerProcess()
-            {
-                Channels = new ConcurrentDictionary<NvChannelName, NvChannel>();
-
-                Channels.TryAdd(NvChannelName.Gpu, new NvChannel());
-            }
-        }
-
-        private static ConcurrentDictionary<Process, ChannelsPerProcess> Channels;
+        private static ConcurrentDictionary<Process, NvChannel> Channels;
 
         static NvHostChannelIoctl()
         {
-            Channels = new ConcurrentDictionary<Process, ChannelsPerProcess>();
+            Channels = new ConcurrentDictionary<Process, NvChannel>();
         }
 
-        public static int ProcessIoctlGpu(ServiceCtx Context, int Cmd)
-        {
-            return ProcessIoctl(Context, NvChannelName.Gpu, Cmd);
-        }
-
-        public static int ProcessIoctl(ServiceCtx Context, NvChannelName Channel, int Cmd)
+        public static int ProcessIoctl(ServiceCtx Context, int Cmd)
         {
             switch (Cmd & 0xffff)
             {
+                case 0x0001: return Submit           (Context);
+                case 0x0002: return GetSyncpoint     (Context);
+                case 0x0003: return GetWaitBase      (Context);
+                case 0x0009: return MapBuffer        (Context);
+                case 0x000a: return UnmapBuffer      (Context);
                 case 0x4714: return SetUserData      (Context);
                 case 0x4801: return SetNvMap         (Context);
-                case 0x4803: return SetTimeout       (Context, Channel);
+                case 0x4803: return SetTimeout       (Context);
                 case 0x4808: return SubmitGpfifo     (Context);
                 case 0x4809: return AllocObjCtx      (Context);
                 case 0x480b: return ZcullBind        (Context);
@@ -50,6 +39,138 @@ namespace Ryujinx.HLE.HOS.Services.Nv.NvHostChannel
             }
 
             throw new NotImplementedException(Cmd.ToString("x8"));
+        }
+
+        private static int Submit(ServiceCtx Context)
+        {
+            long InputPosition  = Context.Request.GetBufferType0x21().Position;
+            long OutputPosition = Context.Request.GetBufferType0x22().Position;
+
+            NvHostChannelSubmit Args = AMemoryHelper.Read<NvHostChannelSubmit>(Context.Memory, InputPosition);
+
+            NvGpuVmm Vmm = NvGpuASIoctl.GetASCtx(Context).Vmm;
+
+            for (int Index = 0; Index < Args.CmdBufsCount; Index++)
+            {
+                long CmdBufOffset = InputPosition + 0x10 + Index * 0xc;
+
+                NvHostChannelCmdBuf CmdBuf = AMemoryHelper.Read<NvHostChannelCmdBuf>(Context.Memory, CmdBufOffset);
+
+                NvMapHandle Map = NvMapIoctl.GetNvMap(Context, CmdBuf.MemoryId);
+
+                int[] CmdBufData = new int[CmdBuf.WordsCount];
+
+                for (int Offset = 0; Offset < CmdBufData.Length; Offset++)
+                {
+                    CmdBufData[Offset] = Context.Memory.ReadInt32(Map.Address + CmdBuf.Offset + Offset * 4);
+                }
+
+                Context.Device.Gpu.PushCommandBuffer(Vmm, CmdBufData);
+            }
+
+            //TODO: Relocation, waitchecks, etc.
+
+            return NvResult.Success;
+        }
+
+        private static int GetSyncpoint(ServiceCtx Context)
+        {
+            //TODO
+            long InputPosition  = Context.Request.GetBufferType0x21().Position;
+            long OutputPosition = Context.Request.GetBufferType0x22().Position;
+
+            NvHostChannelGetParamArg Args = AMemoryHelper.Read<NvHostChannelGetParamArg>(Context.Memory, InputPosition);
+
+            Args.Value = 0;
+
+            AMemoryHelper.Write(Context.Memory, OutputPosition, Args);
+
+            return NvResult.Success;
+        }
+
+        private static int GetWaitBase(ServiceCtx Context)
+        {
+            long InputPosition  = Context.Request.GetBufferType0x21().Position;
+            long OutputPosition = Context.Request.GetBufferType0x22().Position;
+
+            NvHostChannelGetParamArg Args = AMemoryHelper.Read<NvHostChannelGetParamArg>(Context.Memory, InputPosition);
+
+            Args.Value = 0;
+
+            AMemoryHelper.Write(Context.Memory, OutputPosition, Args);
+
+            return NvResult.Success;
+        }
+
+        private static int MapBuffer(ServiceCtx Context)
+        {
+            long InputPosition  = Context.Request.GetBufferType0x21().Position;
+            long OutputPosition = Context.Request.GetBufferType0x22().Position;
+
+            NvHostChannelMapBuffer Args = AMemoryHelper.Read<NvHostChannelMapBuffer>(Context.Memory, InputPosition);
+
+            NvGpuVmm Vmm = NvGpuASIoctl.GetASCtx(Context).Vmm;
+
+            for (int Index = 0; Index < Args.NumEntries; Index++)
+            {
+                int Handle = Context.Memory.ReadInt32(InputPosition + 0xc + Index * 8);
+
+                NvMapHandle Map = NvMapIoctl.GetNvMap(Context, Handle);
+
+                if (Map == null)
+                {
+                    Context.Device.Log.PrintWarning(LogClass.ServiceNv, $"Invalid handle 0x{Handle:x8}!");
+
+                    return NvResult.InvalidInput;
+                }
+
+                lock (Map)
+                {
+                    if (Map.DmaMapAddress == 0)
+                    {
+                        Map.DmaMapAddress = Vmm.MapLow(Map.Address, Map.Size);
+                    }
+
+                    Context.Memory.WriteInt32(OutputPosition + 0xc + 4 + Index * 8, (int)Map.DmaMapAddress);
+                }
+            }
+
+            return NvResult.Success;
+        }
+
+        private static int UnmapBuffer(ServiceCtx Context)
+        {
+            long InputPosition  = Context.Request.GetBufferType0x21().Position;
+
+            NvHostChannelMapBuffer Args = AMemoryHelper.Read<NvHostChannelMapBuffer>(Context.Memory, InputPosition);
+
+            NvGpuVmm Vmm = NvGpuASIoctl.GetASCtx(Context).Vmm;
+
+            for (int Index = 0; Index < Args.NumEntries; Index++)
+            {
+                int Handle = Context.Memory.ReadInt32(InputPosition + 0xc + Index * 8);
+
+                NvMapHandle Map = NvMapIoctl.GetNvMap(Context, Handle);
+
+                if (Map == null)
+                {
+                    Context.Device.Log.PrintWarning(LogClass.ServiceNv, $"Invalid handle 0x{Handle:x8}!");
+
+                    return NvResult.InvalidInput;
+                }
+
+                lock (Map)
+                {
+                    if (Map.DmaMapAddress != 0)
+                    {
+                        Vmm.Free(Map.DmaMapAddress, Map.Size);
+
+                        Map.DmaMapAddress = 0;
+                    }
+                }
+            }
+
+            return NvResult.Success;
         }
 
         private static int SetUserData(ServiceCtx Context)
@@ -72,11 +193,11 @@ namespace Ryujinx.HLE.HOS.Services.Nv.NvHostChannel
             return NvResult.Success;
         }
 
-        private static int SetTimeout(ServiceCtx Context, NvChannelName Channel)
+        private static int SetTimeout(ServiceCtx Context)
         {
             long InputPosition = Context.Request.GetBufferType0x21().Position;
 
-            GetChannel(Context, Channel).Timeout = Context.Memory.ReadInt32(InputPosition);
+            GetChannel(Context).Timeout = Context.Memory.ReadInt32(InputPosition);
 
             return NvResult.Success;
         }
@@ -192,14 +313,9 @@ namespace Ryujinx.HLE.HOS.Services.Nv.NvHostChannel
             Context.Device.Gpu.Fifo.PushBuffer(Vmm, PushBuffer);
         }
 
-        public static NvChannel GetChannel(ServiceCtx Context, NvChannelName Channel)
+        public static NvChannel GetChannel(ServiceCtx Context)
         {
-            ChannelsPerProcess Cpp = Channels.GetOrAdd(Context.Process, (Key) =>
-            {
-                return new ChannelsPerProcess();
-            });
-
-            return Cpp.Channels[Channel];
+            return Channels.GetOrAdd(Context.Process, (Key) => new NvChannel());
         }
 
         public static void UnloadProcess(Process Process)

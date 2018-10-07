@@ -2,7 +2,7 @@ using Ryujinx.Graphics.Memory;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 
-namespace Ryujinx.Graphics
+namespace Ryujinx.Graphics.Graphics3d
 {
     public class NvGpuEngineP2mf : INvGpuEngine
     {

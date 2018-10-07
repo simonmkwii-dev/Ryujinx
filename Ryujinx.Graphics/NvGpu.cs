@@ -1,4 +1,8 @@
 using Ryujinx.Graphics.Gal;
+using Ryujinx.Graphics.Graphics3d;
+using Ryujinx.Graphics.Memory;
+using Ryujinx.Graphics.VideoDecoding;
+using Ryujinx.Graphics.VideoImageComposition;
 
 namespace Ryujinx.Graphics
 {
@@ -15,6 +19,10 @@ namespace Ryujinx.Graphics
         internal NvGpuEngineM2mf EngineM2mf { get; private set; }
         internal NvGpuEngineP2mf EngineP2mf { get; private set; }
 
+        private  CdmaProcessor      CdmaProcessor;
+        internal VideoDecoder       VideoDecoder       { get; private set; }
+        internal VideoImageComposer VideoImageComposer { get; private set; }
+
         public NvGpu(IGalRenderer Renderer)
         {
             this.Renderer = Renderer;
@@ -27,6 +35,26 @@ namespace Ryujinx.Graphics
             Engine3d   = new NvGpuEngine3d(this);
             EngineM2mf = new NvGpuEngineM2mf(this);
             EngineP2mf = new NvGpuEngineP2mf(this);
+
+            CdmaProcessor      = new CdmaProcessor(this);
+            VideoDecoder       = new VideoDecoder(this);
+            VideoImageComposer = new VideoImageComposer(this);
+        }
+
+        public void PushCommandBuffer(NvGpuVmm Vmm, int[] CmdBuffer)
+        {
+            lock (CdmaProcessor)
+            {
+                CdmaProcessor.PushCommands(Vmm, CmdBuffer);
+            }
+        }
+
+        public void UninitializeVideoDecoder()
+        {
+            lock (CdmaProcessor)
+            {
+                FFmpegWrapper.Uninitialize();
+            }
         }
     }
 }
