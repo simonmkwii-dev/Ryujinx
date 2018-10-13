@@ -22,6 +22,8 @@ namespace Ryujinx.HLE.Logging
         ServiceFriend,
         ServiceFs,
         ServiceHid,
+        ServiceIrs,
+        ServiceLdr,
         ServiceLm,
         ServiceMm,
         ServiceNfp,

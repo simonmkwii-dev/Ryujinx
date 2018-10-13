@@ -2,7 +2,7 @@ using System.Runtime.Intrinsics.X86;
 
 public static class AOptimizations
 {
-    public static bool GenerateCallStack = true;
+    internal static bool FastFP = true;
 
     private static bool UseAllSseIfAvailable = true;
 

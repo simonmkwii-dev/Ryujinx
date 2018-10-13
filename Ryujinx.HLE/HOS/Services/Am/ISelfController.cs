@@ -1,6 +1,7 @@
 using Ryujinx.HLE.HOS.Ipc;
 using Ryujinx.HLE.HOS.Kernel;
 using Ryujinx.HLE.Logging;
+using System;
 using System.Collections.Generic;
 
 namespace Ryujinx.HLE.HOS.Services.Am
@@ -12,6 +13,8 @@ namespace Ryujinx.HLE.HOS.Services.Am
         public override IReadOnlyDictionary<int, ServiceProcessRequest> Commands => m_Commands;
 
         private KEvent LaunchableEvent;
+
+        private int IdleTimeDetectionExtension;
 
         public ISelfController(Horizon System)
         {
@@ -28,7 +31,9 @@ namespace Ryujinx.HLE.HOS.Services.Am
                 { 14, SetRestartMessageEnabled              },
                 { 16, SetOutOfFocusSuspendingEnabled        },
                 { 19, SetScreenShotImageOrientation         },
-                { 50, SetHandlesRequestToDisplay            }
+                { 50, SetHandlesRequestToDisplay            },
+                { 62, SetIdleTimeDetectionExtension         },
+                { 63, GetIdleTimeDetectionExtension         }
             };
 
             LaunchableEvent = new KEvent(System);
@@ -57,9 +62,12 @@ namespace Ryujinx.HLE.HOS.Services.Am
 
         public long GetLibraryAppletLaunchableEvent(ServiceCtx Context)
         {
-            LaunchableEvent.Signal();
+            LaunchableEvent.ReadableEvent.Signal();
 
-            int Handle = Context.Process.HandleTable.OpenHandle(LaunchableEvent);
+            if (Context.Process.HandleTable.GenerateHandle(LaunchableEvent.ReadableEvent, out int Handle) != KernelResult.Success)
+            {
+                throw new InvalidOperationException("Out of handles!");
+            }
 
             Context.Response.HandleDesc = IpcHandleDesc.MakeCopy(Handle);
 
@@ -138,6 +146,26 @@ namespace Ryujinx.HLE.HOS.Services.Am
             bool Enable = Context.RequestData.ReadByte() != 0 ? true : false;
 
             Context.Device.Log.PrintStub(LogClass.ServiceAm, "Stubbed.");
+
+            return 0;
+        }
+
+        // SetIdleTimeDetectionExtension(u32)
+        public long SetIdleTimeDetectionExtension(ServiceCtx Context)
+        {
+            IdleTimeDetectionExtension = Context.RequestData.ReadInt32();
+
+            Context.Device.Log.PrintStub(LogClass.ServiceAm, $"Stubbed. IdleTimeDetectionExtension: {IdleTimeDetectionExtension}");
+
+            return 0;
+        }
+
+        // GetIdleTimeDetectionExtension() -> u32
+        public long GetIdleTimeDetectionExtension(ServiceCtx Context)
+        {
+            Context.ResponseData.Write(IdleTimeDetectionExtension);
+
+            Context.Device.Log.PrintStub(LogClass.ServiceAm, $"Stubbed. IdleTimeDetectionExtension: {IdleTimeDetectionExtension}");
 
             return 0;
         }
